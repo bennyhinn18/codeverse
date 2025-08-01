@@ -2,7 +2,7 @@ class CodeVerse {
     constructor() {
         this.teams = [];
         this.currentRound = 1;
-        this.maxRounds = 3;
+        this.maxRounds = 10; // Increased to allow for more teams - real limit is based on eliminations
         this.timer = null;
         this.timeLeft = 300; // 5 minutes in seconds
         this.roundTime = 5; // minutes
@@ -115,7 +115,7 @@ class CodeVerse {
                     members.push({
                         name: input.value.trim(),
                         completed: false,
-                        points: 0,
+                        points: 0,  // Start with 0 points (no cumulative)
                         roundScore: 0
                     });
                 }
@@ -210,17 +210,18 @@ class CodeVerse {
             
             // Update points based on completion and time
             if (completed) {
-                // Calculate time-based score: max 50, reduce 5 every 30 seconds
+                // Calculate time-based score: max points = roundTime * 10, reduce 5 every 30 seconds
+                const maxPoints = this.roundTime * 10; // 5 min = 50 pts, 7 min = 70 pts
                 const timeElapsed = (this.roundTime * 60) - this.timeLeft;
                 const thirtySecondIntervals = Math.floor(timeElapsed / 30);
-                const roundScore = Math.max(5, 50 - (thirtySecondIntervals * 5)); // minimum 5 points
+                const roundScore = Math.max(5, maxPoints - (thirtySecondIntervals * 5)); // minimum 5 points
                 
-                // Add to existing points (cumulative scoring)
+                // Set round score (not cumulative)
                 team.members[memberIndex].roundScore = roundScore;
-                team.members[memberIndex].points += roundScore;
+                team.members[memberIndex].points = roundScore; // Reset to current round score only
             } else {
                 team.members[memberIndex].roundScore = 0;
-                // Don't subtract points, just don't add any for this round
+                team.members[memberIndex].points = 0; // Reset points
             }
             
             this.updateTeamScore(team);
@@ -229,9 +230,9 @@ class CodeVerse {
     }
 
     updateTeamScore(team) {
-        // Calculate total points from all members across all rounds
+        // Calculate total points from all members for current round only
         team.totalPoints = team.members.reduce((total, member) => {
-            return total + member.points;
+            return total + member.points; // points now only contain current round score
         }, 0);
         
         // Bonus for team completion in current round
@@ -310,29 +311,12 @@ class CodeVerse {
         const activeTeams = this.teams.filter(t => !t.eliminated);
         
         if (activeTeams.length <= 1) {
-            // This shouldn't happen, but just in case
-            this.showWinner();
-            return;
-        }
-        
-        // Check if this is the final round (2 teams remaining)
-        if (activeTeams.length === 2) {
-            // Final round - eliminate the loser and assign them a dare too
-            const lowestScore = Math.min(...activeTeams.map(t => t.totalPoints));
-            const eliminatedTeam = activeTeams.find(t => t.totalPoints === lowestScore);
-            
-            if (eliminatedTeam) {
-                eliminatedTeam.eliminated = true;
-                eliminatedTeam.eliminationRound = this.currentRound;
-                this.showEliminationScreen(eliminatedTeam, true); // true indicates final round
+            // Game over - we have a winner
+            if (this.dares.length > 0) {
+                this.startDareSequence();
             } else {
                 this.showWinner();
             }
-            return;
-        }
-        
-        if (this.currentRound >= this.maxRounds) {
-            this.showWinner();
             return;
         }
         
@@ -343,13 +327,18 @@ class CodeVerse {
         if (eliminatedTeam) {
             eliminatedTeam.eliminated = true;
             eliminatedTeam.eliminationRound = this.currentRound;
-            this.showEliminationScreen(eliminatedTeam, false); // false indicates not final round
+            
+            // Check if this elimination leaves us with only 1 team (winner)
+            const remainingAfterElimination = activeTeams.length - 1;
+            const isFinalElimination = remainingAfterElimination === 1;
+            
+            this.showEliminationScreen(eliminatedTeam, isFinalElimination);
         } else {
             this.nextRound();
         }
     }
 
-    showEliminationScreen(eliminatedTeam, isFinalRound = false) {
+    showEliminationScreen(eliminatedTeam, isFinalElimination = false) {
         const eliminatedTeamDiv = document.getElementById('eliminated-team');
         eliminatedTeamDiv.innerHTML = `
             <h3>${eliminatedTeam.name}</h3>
@@ -365,16 +354,24 @@ class CodeVerse {
                 </ul>
                 ${eliminatedTeam.teamBonusThisRound > 0 ? `<p style="color: #ffd700;">🏆 Team Completion Bonus: +${eliminatedTeam.teamBonusThisRound} points</p>` : ''}
             </div>
-            ${isFinalRound ? '<p style="color: #ffd700; font-weight: bold;">🏆 Final Round Elimination 🏆</p>' : ''}
+            ${isFinalElimination ? '<p style="color: #ffd700; font-weight: bold;">🏆 Final Elimination - We Have Our Champion! 🏆</p>' : ''}
         `;
         
         document.getElementById('dare-input').value = '';
         const nextRoundBtn = document.getElementById('next-round-btn');
         
-        if (isFinalRound) {
+        if (isFinalElimination) {
+            // This is the final elimination - after assigning dare, show dare sequence or winner
             nextRoundBtn.innerHTML = '<i class="fas fa-theater-masks"></i> Start Dare Time!';
-            nextRoundBtn.onclick = () => this.startDareSequence();
+            nextRoundBtn.onclick = () => {
+                if (this.dares.length > 0) {
+                    this.startDareSequence();
+                } else {
+                    this.showWinner();
+                }
+            };
         } else {
+            // Regular elimination - continue to next round
             nextRoundBtn.innerHTML = '<i class="fas fa-arrow-right"></i> Continue to Next Round';
             nextRoundBtn.onclick = () => this.nextRound();
         }
@@ -458,15 +455,16 @@ class CodeVerse {
         this.currentRound++;
         this.timeLeft = this.roundTime * 60;
         
-        // Reset member completion status for new round but keep cumulative points
+        // Reset member completion status and points for new round
         this.teams.forEach(team => {
             if (!team.eliminated) {
                 team.members.forEach(member => {
                     member.completed = false;
                     member.roundScore = 0; // Reset round score for new round
-                    // Keep member.points (cumulative score)
+                    member.points = 0; // Reset points to 0 for new round (no cumulative)
                 });
                 team.teamBonusThisRound = 0; // Reset team bonus flag
+                team.totalPoints = 0; // Reset total points for new round
             }
         });
         
@@ -568,6 +566,12 @@ class CodeVerse {
     }
 
     startDareSequence() {
+        // If no dares have been collected yet, go directly to winner
+        if (this.dares.length === 0) {
+            this.showWinner();
+            return;
+        }
+        
         this.currentDareIndex = 0;
         this.showPage('dare-time-page');
         this.showCurrentDare();
